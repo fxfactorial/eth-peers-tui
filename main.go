@@ -21,6 +21,7 @@ type peerStuff struct {
 	remoteAddr string
 	location   string
 	active     bool
+	enode      string
 }
 
 type TableData struct {
@@ -32,24 +33,29 @@ func (d *TableData) GetCell(row, column int) *tview.TableCell {
 	peer, ok := d.holdingPeer[row]
 
 	if !ok {
+		fmt.Println("dont have it", row, column)
 		return nil
 	}
 
-	if column == 1 {
+	if column == 0 {
 		return tview.NewTableCell(peer.remoteAddr)
 	}
 
-	if column == 2 {
+	if column == 1 {
 		return tview.NewTableCell(peer.location)
 	}
 
-	if column == 3 {
+	if column == 2 {
 		active := peer.active
 		if active {
-			return tview.NewTableCell("[red]inactive")
+			return tview.NewTableCell("[green]active")
 		}
 
-		return tview.NewTableCell("[green]active")
+		return tview.NewTableCell("[red]inactive")
+	}
+
+	if column == 3 {
+		return tview.NewTableCell(peer.enode[:20] + "...")
 	}
 
 	return nil
@@ -61,16 +67,29 @@ func (d *TableData) GetRowCount() int {
 }
 
 func (d *TableData) GetColumnCount() int {
-	return 3
+	return 4
 }
 
-func (d *TableData) addPeer(a, b string) {
-	d.holdingPeer[len(d.holdingPeer)+1] = peerStuff{remoteAddr: a, location: b}
+func (d *TableData) addPeer(ip, remoteAddr, location, enode string) {
+	p := peerStuff{
+		remoteAddr: remoteAddr,
+		location:   location,
+		active:     true,
+		enode:      enode,
+	}
+
+	if len(d.holdingPeer) == 0 {
+		d.holdingPeer[0] = p
+	} else {
+		d.holdingPeer[len(d.holdingPeer)] = p
+	}
+
 }
 
 func main() {
 	flag.Parse()
 	log.SetFlags(0)
+
 	ipDB, err := maxminddb.Open("GeoLite2-City_20210928/GeoLite2-City.mmdb")
 
 	if err != nil {
@@ -92,12 +111,17 @@ func main() {
 
 	done := make(chan struct{})
 	app := tview.NewApplication()
-	data := &TableData{}
+	data := &TableData{
+		holdingPeer: map[int]peerStuff{},
+	}
+
 	table := tview.NewTable().
-		SetBorders(true).
+		SetBorders(false).
 		SetSelectable(true, true).
-		SetContent(data).
-		SetTitle("eth p2p nodes")
+		SetContent(data)
+		//		SetTitle("eth p2p nodes").
+		//		SetTitleAlign(1).
+		//		SetTitleColor(tcell.Color105)
 
 	go func() {
 		if err := app.SetRoot(table, true).SetFocus(table).Run(); err != nil {
@@ -123,23 +147,31 @@ func main() {
 			ipStr := buffer["plain-ip"].(string)
 			ip := net.ParseIP(ipStr)
 			remoteStr := buffer["remote"].(string)
+			enode := buffer["enode"].(string)
 
-			var record map[string]interface{}
+			var record struct {
+				City struct {
+					Names struct {
+						En string `maxminddb:"en"`
+					} `maxminddb:"names"`
+				} `maxminddb:"city"`
+				Country struct {
+					ISOCode string `maxminddb:"iso_code"`
+				} `maxminddb:"country"`
+			} // Or any appropriate struct
 
 			if err := ipDB.Lookup(ip, &record); err != nil {
 				fmt.Println("issue on lookup", err)
 				return
 			}
 
-			pretty, err := json.MarshalIndent(record, " ", " ")
-			if err != nil {
-				fmt.Println("soimething wrong", err)
-				return
-			}
-			fmt.Println("here is what", string(pretty))
 			//			fmt.Println("here is record loop?", record)
 			//			list.AddItem(ipStr, buffer["remote"].(string), 'e', nil)
-			data.addPeer(remoteStr, record["foo"].(string))
+			data.addPeer(
+				ipStr, remoteStr,
+				fmt.Sprintf("%s:%s", record.Country.ISOCode, record.City.Names.En),
+				enode,
+			)
 			app.Draw()
 		}
 	}()
