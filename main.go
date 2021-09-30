@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -31,35 +32,24 @@ type TableData struct {
 
 func (d *TableData) GetCell(row, column int) *tview.TableCell {
 	peer, ok := d.holdingPeer[row]
-
 	if !ok {
 		fmt.Println("dont have it", row, column)
 		return nil
 	}
-
-	if column == 0 {
+	switch column {
+	case 0:
 		return tview.NewTableCell(peer.remoteAddr)
-	}
-
-	if column == 1 {
+	case 1:
 		return tview.NewTableCell(peer.location)
-	}
-
-	if column == 2 {
-		active := peer.active
-		if active {
+	case 2:
+		if peer.active {
 			return tview.NewTableCell("[green]active")
 		}
-
 		return tview.NewTableCell("[red]inactive")
-	}
-
-	if column == 3 {
+	case 3:
 		return tview.NewTableCell(peer.enode[:20] + "...")
 	}
-
 	return nil
-
 }
 
 func (d *TableData) GetRowCount() int {
@@ -77,39 +67,39 @@ func (d *TableData) addPeer(ip, remoteAddr, location, enode string) {
 		active:     true,
 		enode:      enode,
 	}
-
 	if len(d.holdingPeer) == 0 {
 		d.holdingPeer[0] = p
 	} else {
 		d.holdingPeer[len(d.holdingPeer)] = p
 	}
-
 }
 
 func main() {
 	flag.Parse()
 	log.SetFlags(0)
 
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
+
+	go func() {
+		select {
+		case <-ctx.Done():
+			cancel()
+		}
+	}()
+
 	ipDB, err := maxminddb.Open("GeoLite2-City_20210928/GeoLite2-City.mmdb")
-
 	if err != nil {
-		fmt.Println("ip db error ", err)
-		return
+		log.Fatalf("error opening database %s\n", err.Error())
 	}
-
-	interrupt := make(chan os.Signal, 1)
-	signal.Notify(interrupt, os.Interrupt)
 
 	u := url.URL{Scheme: "ws", Host: *addr, Path: "/"}
 	c, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
-
 	if err != nil {
 		log.Fatal("dial:", err)
 	}
-
 	defer c.Close()
 
-	done := make(chan struct{})
 	app := tview.NewApplication()
 	data := &TableData{
 		holdingPeer: map[int]peerStuff{},
@@ -130,18 +120,19 @@ func main() {
 	}()
 
 	go func() {
-		defer close(done)
 		buffer := map[string]interface{}{}
-
 		for {
-			_, message, err := c.ReadMessage()
-			if err != nil {
-				log.Println("read:", err)
+			select {
+			case <-ctx.Done():
 				return
+			default:
 			}
-
-			if err := json.Unmarshal(message, &buffer); err != nil {
-				fmt.Println("talk about it", err)
+			_, msg, err := c.ReadMessage()
+			if err != nil {
+				log.Fatalf("error reading message: %s\n", err.Error())
+			}
+			if err := json.Unmarshal(msg, &buffer); err != nil {
+				log.Fatalf("error unmarshaling message: %s\n", err.Error())
 			}
 
 			ipStr := buffer["plain-ip"].(string)
@@ -161,8 +152,7 @@ func main() {
 			} // Or any appropriate struct
 
 			if err := ipDB.Lookup(ip, &record); err != nil {
-				fmt.Println("issue on lookup", err)
-				return
+				log.Fatalf("error on database lookup: %s\n", err.Error())
 			}
 
 			//			fmt.Println("here is record loop?", record)
@@ -175,17 +165,11 @@ func main() {
 			app.Draw()
 		}
 	}()
-
 	err = c.WriteMessage(websocket.TextMessage, []byte("subscribe to peer stuff please"))
-
 	if err != nil {
-		log.Println("write:", err)
-		return
+		log.Fatalf("error writing message: %s\n", err.Error())
 	}
-
-	<-interrupt
-	log.Println("interrupt")
-
+	<-ctx.Done()
 	// Cleanly close the connection by sending a close message and then
 	// waiting (with timeout) for the server to close the connection.
 	//	err := c.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
@@ -194,5 +178,4 @@ func main() {
 		log.Println("write close:", err)
 		return
 	}
-
 }
