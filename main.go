@@ -17,6 +17,7 @@ import (
 )
 
 var addr = flag.String("addr", "localhost:8080", "http service address")
+var mmdb = flag.String("mmdb", "GeoLite2-City_20210928/GeoLite2-City.mmdb", "path to MaxMind db file")
 
 type peerStuff struct {
 	remoteAddr string
@@ -88,7 +89,7 @@ func main() {
 		}
 	}()
 
-	ipDB, err := maxminddb.Open("GeoLite2-City_20210928/GeoLite2-City.mmdb")
+	ipDB, err := maxminddb.Open(*mmdb)
 	if err != nil {
 		log.Fatalf("error opening database %s\n", err.Error())
 	}

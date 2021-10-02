@@ -10,4 +10,4 @@ then run this cli via the usual `go build`
 
 get it via here: https://dev.maxmind.com/geoip/geolite2-free-geolocation-data?lang=en
 
-I'm assuming GeoLite2-City_20210928/ , someone do a PR to make it not hardcoded
+run with `mmdb` flag to specify an ip location db, otherwise I'm assuming GeoLite2-City_20210928/
